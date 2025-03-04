@@ -1,0 +1,221 @@
+<?php
+/**
+ * Integrates with MarketKing for vendor functionality.
+ */
+class CTOS_MarketKing_Integration {
+    
+    /**
+     * Constructor
+     */
+    public function __construct() {
+        // Add dashboard menu items for producers
+        add_action('marketking_after_dashboard_content', array($this, 'add_producer_dashboard_items'));
+        
+        // Register custom endpoint for track orders
+        add_action('init', array($this, 'register_track_orders_endpoint'));
+        
+        // Add tab to MarketKing dashboard
+        add_filter('marketking_dashboard_tabs', array($this, 'add_track_orders_tab'));
+        
+        // Register custom endpoint for WooCommerce My Account
+        add_action('init', array($this, 'register_customer_track_orders_endpoint'));
+        add_filter('woocommerce_account_menu_items', array($this, 'add_track_orders_menu_item'));
+        add_action('woocommerce_account_my-track-orders_endpoint', array($this, 'my_track_orders_content'));
+    }
+    
+    /**
+     * Check if user is a producer
+     * 
+     * @param int $user_id
+     * @return bool
+     */
+    public static function is_producer($user_id) {
+        if (function_exists('marketking_is_vendor')) {
+            return marketking_is_vendor($user_id);
+        }
+        return false;
+    }
+    
+    /**
+     * Add dashboard menu items for producers
+     */
+    public function add_producer_dashboard_items() {
+        global $current_user;
+        
+        if (!self::is_producer($current_user->ID)) {
+            return;
+        }
+        
+        // Only show for producers
+        ?>
+        <div class="marketking_dashboard_item marketking_dashboard_item_small">
+            <div class="marketking_dashboard_item_header">
+                <div class="marketking_dashboard_item_title">
+                    <?php esc_html_e('Track Orders', 'custom-track-ordering-system'); ?>
+                </div>
+                <div class="marketking_dashboard_item_icon">
+                    <img src="<?php echo plugins_url('../assets/images/music-note.svg', dirname(__FILE__)); ?>">
+                </div>
+            </div>
+            <div class="marketking_dashboard_item_numbers">
+                <?php
+                $count = self::get_producer_orders_count($current_user->ID);
+                echo $count;
+                ?>
+            </div>
+            <div class="marketking_dashboard_item_text">
+                <?php esc_html_e('Custom track orders', 'custom-track-ordering-system'); ?>
+            </div>
+            <div class="marketking_dashboard_item_buttons">
+                <a href="<?php echo esc_url(trailingslashit(marketking()->dashboard_url).'track-orders'); ?>" class="marketking_dashboard_item_bottom">
+                    <?php esc_html_e('VIEW TRACK ORDERS', 'custom-track-ordering-system'); ?>
+                </a>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Register track orders endpoint for MarketKing dashboard
+     */
+    public function register_track_orders_endpoint() {
+        if (function_exists('marketking')) {
+            add_rewrite_endpoint('track-orders', EP_ROOT | EP_PAGES);
+        }
+    }
+    
+    /**
+     * Add track orders tab to MarketKing dashboard
+     */
+    public function add_track_orders_tab($tabs) {
+        global $current_user;
+        
+        if (self::is_producer($current_user->ID)) {
+            $tabs['track-orders'] = array(
+                'title' => esc_html__('Track Orders', 'custom-track-ordering-system'),
+                'icon' => 'music',
+                'priority' => 35 // after orders
+            );
+        }
+        
+        return $tabs;
+    }
+    
+    /**
+     * Register customer track orders endpoint for WooCommerce My Account
+     */
+    public function register_customer_track_orders_endpoint() {
+        add_rewrite_endpoint('my-track-orders', EP_ROOT | EP_PAGES);
+    }
+    
+    /**
+     * Add track orders menu item to WooCommerce My Account menu
+     */
+    public function add_track_orders_menu_item($items) {
+        // Add after orders
+        $new_items = array();
+        
+        foreach ($items as $key => $value) {
+            $new_items[$key] = $value;
+            
+            if ($key === 'orders') {
+                $new_items['my-track-orders'] = __('My Track Orders', 'custom-track-ordering-system');
+            }
+        }
+        
+        return $new_items;
+    }
+    
+    /**
+     * My Track Orders content
+     */
+    public function my_track_orders_content() {
+        include(plugin_dir_path(dirname(__FILE__)) . 'templates/customer-track-orders.php');
+    }
+    
+    /**
+     * Get producer orders
+     * 
+     * @param int $producer_id
+     * @return array
+     */
+    public static function get_producer_orders($producer_id) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ctos_order_meta';
+        
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE producer_id = %d ORDER BY created_at DESC",
+            $producer_id
+        ));
+    }
+    
+    /**
+     * Get producer orders count
+     * 
+     * @param int $producer_id
+     * @return int
+     */
+    public static function get_producer_orders_count($producer_id) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ctos_order_meta';
+        
+        return $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE producer_id = %d",
+            $producer_id
+        ));
+    }
+    
+    /**
+     * Get customer orders
+     * 
+     * @param int $customer_id
+     * @return array
+     */
+    public static function get_customer_orders($customer_id) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ctos_order_meta';
+        
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE customer_id = %d ORDER BY created_at DESC",
+            $customer_id
+        ));
+    }
+    
+    /**
+     * Get status label
+     * 
+     * @param string $status
+     * @return string
+     */
+    public static function get_status_label($status) {
+        $labels = array(
+            'pending_deposit' => __('Pending Deposit', 'custom-track-ordering-system'),
+            'pending_demo_submission' => __('Awaiting Demo', 'custom-track-ordering-system'),
+            'awaiting_customer_approval' => __('Awaiting Approval', 'custom-track-ordering-system'),
+            'awaiting_final_payment' => __('Awaiting Payment', 'custom-track-ordering-system'),
+            'awaiting_final_delivery' => __('Awaiting Delivery', 'custom-track-ordering-system'),
+            'completed' => __('Completed', 'custom-track-ordering-system'),
+        );
+        
+        return isset($labels[$status]) ? $labels[$status] : ucfirst(str_replace('_', ' ', $status));
+    }
+    
+    /**
+     * Get status class
+     * 
+     * @param string $status
+     * @return string
+     */
+    public static function get_status_class($status) {
+        $classes = array(
+            'pending_deposit' => 'ctos-status-pending',
+            'pending_demo_submission' => 'ctos-status-pending-demo',
+            'awaiting_customer_approval' => 'ctos-status-awaiting-approval',
+            'awaiting_final_payment' => 'ctos-status-awaiting-payment',
+            'awaiting_final_delivery' => 'ctos-status-awaiting-delivery',
+            'completed' => 'ctos-status-completed',
+        );
+        
+        return isset($classes[$status]) ? $classes[$status] : 'ctos-status-pending';
+    }
+}
